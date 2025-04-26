@@ -3,6 +3,7 @@ import torch
 import numpy as np
 from sklearn.decomposition import PCA
 import copy
+import argparse
 
 def download_and_analyze_tinyllama():
     # Download and load the TinyLlama model
@@ -164,6 +165,12 @@ def compress_model_with_pca(model, variance_threshold=0.99):
     return compressed_model
             
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Analyze and evaluate TinyLlama model with PCA compression")
+    parser.add_argument("--variance-threshold", type=float, default=0.90,
+                        help="Variance threshold for PCA compression (default: 0.90)")
+    args = parser.parse_args()
+
     print("Analyzing and evaluating TinyLlama model...")
     model, tokenizer = download_and_analyze_tinyllama()
     
@@ -172,7 +179,7 @@ def main():
     original_score = evaluate_tinyllama(model, tokenizer)
     
     # Compress model with PCA
-    compressed_model = compress_model_with_pca(model, variance_threshold=0.99)
+    compressed_model = compress_model_with_pca(model, variance_threshold=args.variance_threshold)
     
     # Print compressed model layers
     print("\nCompressed TinyLlama Model Layers:")
@@ -195,7 +202,7 @@ def main():
     print("\nTotal parameters in compressed model:", f"{total_params:,}")
     
     # Evaluate compressed model
-    print("\n=== PCA Compressed Model Evaluation (99% variance) ===")
+    print(f"\n=== PCA Compressed Model Evaluation ({args.variance_threshold*100}% variance) ===")
     compressed_score = evaluate_tinyllama(compressed_model, tokenizer)
     
     # Compare results
