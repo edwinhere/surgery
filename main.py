@@ -81,9 +81,10 @@ def evaluate_tinyllama(model, tokenizer):
     
     return score
 
-def apply_pca_to_matrix(weight_matrix, n_components=20):
+def apply_pca_to_matrix(weight_matrix, variance_threshold=0.99):
     """
-    Apply PCA to a weight matrix, reducing it to n_components principal components
+    Apply PCA to a weight matrix, keeping enough components to explain 
+    the specified amount of variance (default: 99%)
     """
     original_shape = weight_matrix.shape
     original_device = weight_matrix.device
@@ -97,37 +98,53 @@ def apply_pca_to_matrix(weight_matrix, n_components=20):
         # Apply PCA to the larger dimension
         if original_shape[0] <= original_shape[1]:
             # More columns than rows, apply PCA to columns
-            pca = PCA(n_components=min(n_components, original_shape[1]))
-            transformed = pca.fit_transform(weight_np)
-            reconstructed = np.matmul(transformed, pca.components_)
+            pca = PCA(n_components=min(original_shape[1], original_shape[0]), svd_solver='full')
+            pca.fit(weight_np)
+            # Find number of components for desired variance
+            n_components = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= variance_threshold) + 1
+            print(f"  Using {n_components} components to explain {variance_threshold*100:.1f}% variance")
+            # Transform and reconstruct with selected components
+            transformed = pca.transform(weight_np)[:, :n_components]
+            reconstructed = np.matmul(transformed, pca.components_[:n_components])
         else:
             # More rows than columns, apply PCA to rows
-            pca = PCA(n_components=min(n_components, original_shape[0]))
-            transformed = pca.fit_transform(weight_np.T)
-            reconstructed = np.matmul(transformed, pca.components_).T
+            pca = PCA(n_components=min(original_shape[0], original_shape[1]), svd_solver='full')
+            pca.fit(weight_np.T)
+            # Find number of components for desired variance
+            n_components = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= variance_threshold) + 1
+            print(f"  Using {n_components} components to explain {variance_threshold*100:.1f}% variance")
+            # Transform and reconstruct with selected components
+            transformed = pca.transform(weight_np.T)[:, :n_components]
+            reconstructed = np.matmul(transformed, pca.components_[:n_components]).T
     
     # For embedding matrices or attention matrices (common in transformers)
     elif len(original_shape) == 3:
         # Reshape to 2D, apply PCA, then reshape back
         reshaped = weight_np.reshape(original_shape[0], -1)
-        pca = PCA(n_components=min(n_components, reshaped.shape[1]))
-        transformed = pca.fit_transform(reshaped)
-        reconstructed_2d = np.matmul(transformed, pca.components_)
+        max_components = min(reshaped.shape[0], reshaped.shape[1])
+        pca = PCA(n_components=max_components, svd_solver='full')
+        pca.fit(reshaped)
+        # Find number of components for desired variance
+        n_components = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= variance_threshold) + 1
+        print(f"  Using {n_components} components to explain {variance_threshold*100:.1f}% variance")
+        # Transform and reconstruct with selected components
+        transformed = pca.transform(reshaped)[:, :n_components]
+        reconstructed_2d = np.matmul(transformed, pca.components_[:n_components])
         reconstructed = reconstructed_2d.reshape(original_shape)
     
     # Return as tensor on original device with original dtype
     reconstructed_tensor = torch.tensor(reconstructed, device=original_device, dtype=original_dtype)
     return reconstructed_tensor
 
-def compress_model_with_pca(model, n_components=20):
+def compress_model_with_pca(model, variance_threshold=0.99):
     """
     Apply PCA to all weight matrices in the model,
-    keeping only the top n components
+    keeping enough components to explain the specified variance threshold
     """
     # Create a deep copy to avoid modifying the original model
     compressed_model = copy.deepcopy(model)
     
-    print(f"\nApplying PCA with {n_components} components to model weights...")
+    print(f"\nApplying PCA with variance threshold {variance_threshold*100:.1f}% to model weights...")
     
     # Track compression stats
     total_layers = 0
@@ -149,7 +166,7 @@ def compress_model_with_pca(model, n_components=20):
         
         # Apply PCA and update the parameter
         with torch.no_grad():
-            param.copy_(apply_pca_to_matrix(param, n_components))
+            param.copy_(apply_pca_to_matrix(param, variance_threshold))
     
     print(f"PCA applied to {processed_layers} out of {total_layers} layers.")
     return compressed_model
@@ -163,10 +180,10 @@ def main():
     original_score = evaluate_tinyllama(model, tokenizer)
     
     # Compress model with PCA
-    compressed_model = compress_model_with_pca(model, n_components=20)
+    compressed_model = compress_model_with_pca(model, variance_threshold=0.99)
     
     # Evaluate compressed model
-    print("\n=== PCA Compressed Model Evaluation (20 components) ===")
+    print("\n=== PCA Compressed Model Evaluation (99% variance) ===")
     compressed_score = evaluate_tinyllama(compressed_model, tokenizer)
     
     # Compare results
