@@ -1,4 +1,10 @@
-# Surgery
+# TL;DR:
+
+`W_k` and `W_v` are so amazingly low dimensional spaces if v-stacked and PCA fit together. With just 30% of the variance explained using principal components, the LLM still performs reasonably well.
+
+No wonder the DeepSeek team added a latent matrix for W_kv to generate W_k and W_v. K and V is a nothing burger.
+
+# Project Surgery
 
 This project explores the effects of dimensionality reduction on TinyLlama by replacing the Wk, Wq, and Wv attention matrices with reconstructed versions from their PCA components.
 
