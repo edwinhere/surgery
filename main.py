@@ -138,37 +138,29 @@ def apply_pca_to_matrix(weight_matrix, variance_threshold=0.99):
 
 def compress_model_with_pca(model, variance_threshold=0.99):
     """
-    Apply PCA to all weight matrices in the model,
+    Apply PCA to q_proj, k_proj, v_proj matrices in attention layers,
     keeping enough components to explain the specified variance threshold
     """
     # Create a deep copy to avoid modifying the original model
     compressed_model = copy.deepcopy(model)
     
-    print(f"\nApplying PCA with variance threshold {variance_threshold*100:.1f}% to model weights...")
+    print(f"\nApplying PCA with variance threshold {variance_threshold*100:.1f}% to attention projection matrices...")
     
     # Track compression stats
-    total_layers = 0
-    processed_layers = 0
+    total_processed = 0
     
-    # Process each parameter in the model
+    # Process only q_proj, k_proj, v_proj matrices
     for name, param in compressed_model.named_parameters():
-        total_layers += 1
-        # Skip parameters that don't have at least 2 dimensions
-        if len(param.shape) < 2 or param.shape[0] < 3 or param.shape[1] < 3:
-            continue
+        # Only process attention projection matrices
+        if any(proj in name for proj in ['q_proj', 'k_proj', 'v_proj']):
+            print(f"Applying PCA to {name} with shape {param.shape}...")
             
-        # Skip certain parameters where PCA might be problematic
-        if 'bias' in name or 'norm' in name or 'embedding' in name:
-            continue
-            
-        processed_layers += 1
-        print(f"Applying PCA to {name} with shape {param.shape}...")
-        
-        # Apply PCA and update the parameter
-        with torch.no_grad():
-            param.copy_(apply_pca_to_matrix(param, variance_threshold))
+            # Apply PCA and update the parameter
+            with torch.no_grad():
+                param.copy_(apply_pca_to_matrix(param, variance_threshold))
+            total_processed += 1
     
-    print(f"PCA applied to {processed_layers} out of {total_layers} layers.")
+    print(f"PCA applied to {total_processed} attention projection matrices.")
     return compressed_model
             
 def main():
