@@ -174,6 +174,26 @@ def main():
     # Compress model with PCA
     compressed_model = compress_model_with_pca(model, variance_threshold=0.99)
     
+    # Print compressed model layers
+    print("\nCompressed TinyLlama Model Layers:")
+    print("=" * 40)
+    
+    for name, module in compressed_model.named_modules():
+        # Skip the parent module
+        if name == "":
+            continue
+        
+        # Format module info
+        module_type = module.__class__.__name__
+        param_count = sum(p.numel() for p in module.parameters() if p.requires_grad)
+        
+        if param_count > 0:  # Only show layers with parameters
+            print(f"{name:<30} | {module_type:<20} | {param_count:,} params")
+    
+    # Print total parameters
+    total_params = sum(p.numel() for p in compressed_model.parameters() if p.requires_grad)
+    print("\nTotal parameters in compressed model:", f"{total_params:,}")
+    
     # Evaluate compressed model
     print("\n=== PCA Compressed Model Evaluation (99% variance) ===")
     compressed_score = evaluate_tinyllama(compressed_model, tokenizer)
