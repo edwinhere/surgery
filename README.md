@@ -2,7 +2,9 @@
 
 `W_k` and `W_v` are so amazingly low dimensional spaces if v-stacked and PCA fit together. With just 30% of the variance explained using principal components, the LLM still performs reasonably well.
 
-No wonder the DeepSeek team added a latent matrix for W_kv to generate W_k and W_v. K and V is a nothing burger.
+No wonder the DeepSeek team added a latent matrix for `W_kv` to generate `W_k` and `W_v`. `K` and `V` is a nothing burger.
+
+Also this PCA trick is a way to quickly find architectural improvements to LLM without using fine tuning and blind explorations.
 
 # Project Surgery
 
