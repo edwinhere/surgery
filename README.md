@@ -5,9 +5,9 @@ This project explores the effects of dimensionality reduction on TinyLlama by re
 ## Experiment
 
 In this branch, the Wk, Wq, and Wv matrices of TinyLlama are replaced with matrices reconstructed from their PCA components that explain different amounts of the original variance:
-- 99% of original variance
-- 97.5% of original variance 
-- 95% of original variance
+- 99% of original variance ![image](https://github.com/user-attachments/assets/2b0b07a8-a949-46e4-ae37-620cbffce119)
+- 97.5% of original variance ![image](https://github.com/user-attachments/assets/000ec881-07ca-49b5-9cef-661abbb132e5)
+- 95% of original variance ![image](https://github.com/user-attachments/assets/d5fea694-6efb-4e4d-9eef-855a96e56052)
 
 As the variance threshold decreases, the model's performance progressively degrades, demonstrating the trade-offs between model compression and capabilities.
 
