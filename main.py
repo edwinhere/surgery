@@ -140,7 +140,9 @@ def apply_pca_to_matrix(weight_matrix, variance_threshold=0.99):
 def compress_model_with_pca(model, variance_threshold=0.99):
     """
     Apply PCA to q_proj, k_proj, v_proj matrices in attention layers,
-    keeping enough components to explain the specified variance threshold
+    keeping enough components to explain the specified variance threshold.
+    
+    For each layer, q_proj uses separate PCA while k_proj and v_proj share the same PCA.
     """
     # Create a deep copy to avoid modifying the original model
     compressed_model = copy.deepcopy(model)
@@ -150,16 +152,100 @@ def compress_model_with_pca(model, variance_threshold=0.99):
     # Track compression stats
     total_processed = 0
     
-    # Process only q_proj, k_proj, v_proj matrices
+    # Group parameters by layer to share PCA between k_proj and v_proj
+    layer_params = {}
+    
+    # First, organize parameters by layer
     for name, param in compressed_model.named_parameters():
-        # Only process attention projection matrices
         if any(proj in name for proj in ['q_proj', 'k_proj', 'v_proj']):
-            print(f"Applying PCA to {name} with shape {param.shape}...")
+            # Extract the layer name (e.g., model.layers.0.self_attn)
+            layer_name = name.rsplit('.', 1)[0]  # Get everything before the last dot
             
-            # Apply PCA and update the parameter
+            if layer_name not in layer_params:
+                layer_params[layer_name] = {}
+                
+            # Store the parameter by type (q_proj, k_proj, v_proj)
+            if 'q_proj' in name:
+                layer_params[layer_name]['q_proj'] = (name, param)
+            elif 'k_proj' in name:
+                layer_params[layer_name]['k_proj'] = (name, param)
+            elif 'v_proj' in name:
+                layer_params[layer_name]['v_proj'] = (name, param)
+    
+    # Process each layer
+    for layer_name, params in layer_params.items():
+        print(f"Processing layer: {layer_name}")
+        
+        # Process q_proj separately
+        if 'q_proj' in params:
+            q_name, q_param = params['q_proj']
+            print(f"  Applying separate PCA to {q_name} with shape {q_param.shape}...")
             with torch.no_grad():
-                param.copy_(apply_pca_to_matrix(param, variance_threshold))
+                q_param.copy_(apply_pca_to_matrix(q_param, variance_threshold))
             total_processed += 1
+        
+        # Process k_proj and v_proj together using shared PCA
+        if 'k_proj' in params and 'v_proj' in params:
+            k_name, k_param = params['k_proj']
+            v_name, v_param = params['v_proj']
+            
+            # Verify that k_proj and v_proj have the same shape
+            if k_param.shape == v_param.shape:
+                print(f"  Applying shared PCA to {k_name} and {v_name} with shape {k_param.shape}...")
+                
+                # Combine k and v matrices to fit a shared PCA
+                original_shape = k_param.shape
+                original_device = k_param.device
+                original_dtype = k_param.dtype
+                
+                # Convert to numpy for PCA
+                k_np = k_param.detach().cpu().float().numpy()
+                v_np = v_param.detach().cpu().float().numpy()
+                
+                # Handle 2D matrices (most common case for projection matrices)
+                if len(original_shape) == 2:
+                    # Stack k and v matrices to fit a shared PCA
+                    combined = np.vstack([k_np, v_np])
+                    
+                    # Apply PCA to the combined matrix
+                    pca = PCA(n_components=min(combined.shape[0], combined.shape[1]), svd_solver='full')
+                    pca.fit(combined)
+                    
+                    # Find number of components for desired variance
+                    n_components = np.argmax(np.cumsum(pca.explained_variance_ratio_) >= variance_threshold) + 1
+                    print(f"    Using {n_components} components to explain {variance_threshold*100:.1f}% variance")
+                    
+                    # Transform and reconstruct each matrix separately using the shared PCA
+                    k_transformed = pca.transform(k_np)[:, :n_components]
+                    k_reconstructed = np.matmul(k_transformed, pca.components_[:n_components])
+                    
+                    v_transformed = pca.transform(v_np)[:, :n_components]
+                    v_reconstructed = np.matmul(v_transformed, pca.components_[:n_components])
+                    
+                    # Update the parameters
+                    with torch.no_grad():
+                        k_param.copy_(torch.tensor(k_reconstructed, device=original_device, dtype=original_dtype))
+                        v_param.copy_(torch.tensor(v_reconstructed, device=original_device, dtype=original_dtype))
+                    
+                    total_processed += 2
+                else:
+                    # Handle 3D case if necessary (though projection matrices are usually 2D)
+                    print(f"    WARNING: Unexpected tensor shape {original_shape}, processing separately")
+                    
+                    # Apply PCA separately in this case
+                    with torch.no_grad():
+                        k_param.copy_(apply_pca_to_matrix(k_param, variance_threshold))
+                        v_param.copy_(apply_pca_to_matrix(v_param, variance_threshold))
+                    
+                    total_processed += 2
+            else:
+                print(f"    WARNING: k_proj and v_proj have different shapes, processing separately")
+                # Apply PCA separately if shapes don't match
+                with torch.no_grad():
+                    k_param.copy_(apply_pca_to_matrix(k_param, variance_threshold))
+                    v_param.copy_(apply_pca_to_matrix(v_param, variance_threshold))
+                
+                total_processed += 2
     
     print(f"PCA applied to {total_processed} attention projection matrices.")
     return compressed_model
