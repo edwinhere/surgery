@@ -1,5 +1,8 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch
+import numpy as np
+from sklearn.decomposition import PCA
+import copy
 
 def download_and_analyze_tinyllama():
     # Download and load the TinyLlama model
@@ -78,15 +81,101 @@ def evaluate_tinyllama(model, tokenizer):
     
     return score
 
+def apply_pca_to_matrix(weight_matrix, n_components=20):
+    """
+    Apply PCA to a weight matrix, reducing it to n_components principal components
+    """
+    original_shape = weight_matrix.shape
+    original_device = weight_matrix.device
+    original_dtype = weight_matrix.dtype
+    
+    # Move to CPU and convert to float32 for PCA
+    weight_np = weight_matrix.detach().cpu().float().numpy()
+    
+    # For 2D matrices (e.g., linear layers)
+    if len(original_shape) == 2:
+        # Apply PCA to the larger dimension
+        if original_shape[0] <= original_shape[1]:
+            # More columns than rows, apply PCA to columns
+            pca = PCA(n_components=min(n_components, original_shape[1]))
+            transformed = pca.fit_transform(weight_np)
+            reconstructed = np.matmul(transformed, pca.components_)
+        else:
+            # More rows than columns, apply PCA to rows
+            pca = PCA(n_components=min(n_components, original_shape[0]))
+            transformed = pca.fit_transform(weight_np.T)
+            reconstructed = np.matmul(transformed, pca.components_).T
+    
+    # For embedding matrices or attention matrices (common in transformers)
+    elif len(original_shape) == 3:
+        # Reshape to 2D, apply PCA, then reshape back
+        reshaped = weight_np.reshape(original_shape[0], -1)
+        pca = PCA(n_components=min(n_components, reshaped.shape[1]))
+        transformed = pca.fit_transform(reshaped)
+        reconstructed_2d = np.matmul(transformed, pca.components_)
+        reconstructed = reconstructed_2d.reshape(original_shape)
+    
+    # Return as tensor on original device with original dtype
+    reconstructed_tensor = torch.tensor(reconstructed, device=original_device, dtype=original_dtype)
+    return reconstructed_tensor
+
+def compress_model_with_pca(model, n_components=20):
+    """
+    Apply PCA to all weight matrices in the model,
+    keeping only the top n components
+    """
+    # Create a deep copy to avoid modifying the original model
+    compressed_model = copy.deepcopy(model)
+    
+    print(f"\nApplying PCA with {n_components} components to model weights...")
+    
+    # Track compression stats
+    total_layers = 0
+    processed_layers = 0
+    
+    # Process each parameter in the model
+    for name, param in compressed_model.named_parameters():
+        total_layers += 1
+        # Skip parameters that don't have at least 2 dimensions
+        if len(param.shape) < 2 or param.shape[0] < 3 or param.shape[1] < 3:
+            continue
+            
+        # Skip certain parameters where PCA might be problematic
+        if 'bias' in name or 'norm' in name or 'embedding' in name:
+            continue
+            
+        processed_layers += 1
+        print(f"Applying PCA to {name} with shape {param.shape}...")
+        
+        # Apply PCA and update the parameter
+        with torch.no_grad():
+            param.copy_(apply_pca_to_matrix(param, n_components))
+    
+    print(f"PCA applied to {processed_layers} out of {total_layers} layers.")
+    return compressed_model
+            
 def main():
     print("Analyzing and evaluating TinyLlama model...")
     model, tokenizer = download_and_analyze_tinyllama()
     
-    # Evaluate model
-    score = evaluate_tinyllama(model, tokenizer)
+    # Evaluate original model
+    print("\n=== Original Model Evaluation ===")
+    original_score = evaluate_tinyllama(model, tokenizer)
+    
+    # Compress model with PCA
+    compressed_model = compress_model_with_pca(model, n_components=20)
+    
+    # Evaluate compressed model
+    print("\n=== PCA Compressed Model Evaluation (20 components) ===")
+    compressed_score = evaluate_tinyllama(compressed_model, tokenizer)
+    
+    # Compare results
+    print("\n=== Comparison ===")
+    print(f"Original model score: {original_score:.1f}%")
+    print(f"Compressed model score: {compressed_score:.1f}%")
+    print(f"Score difference: {compressed_score - original_score:.1f}%")
     
     print("\nEvaluation complete!")
-    print(f"Functionality Score: {score:.1f}%")
 
 if __name__ == "__main__":
     main()
